@@ -1,0 +1,11 @@
+Date,Product,Region,Units,Revenue,Satisfaction
+2026-01-03,Alpha,North,120,15600,4.4
+2026-01-05,Beta,South,95,11400,4.1
+2026-01-08,Gamma,East,140,21000,4.7
+2026-01-12,Alpha,West,110,14300,4.3
+2026-02-02,Beta,North,130,15600,4.5
+2026-02-08,Gamma,South,155,23250,4.8
+2026-02-13,Alpha,East,98,12740,4.0
+2026-02-21,Beta,West,125,15000,4.2
+2026-03-01,Gamma,North,175,26250,4.9
+2026-03-06,Alpha,South,105,13650,4.1
