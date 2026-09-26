@@ -68,6 +68,57 @@ def charts(df):
     if len(nums)>1:
         q=df[[nums[0],nums[1]]].dropna().head(5000); out.append({'type':'scatter','title':f'{nums[0]} vs {nums[1]}','x':[js(v) for v in q[nums[0]]],'y':[js(v) for v in q[nums[1]]]})
     return out
+def student_dashboard(df):
+    def label(column): return re.sub(r'[^a-z0-9]+',' ',str(column).lower()).strip()
+    columns=list(df.columns); labels={column:label(column) for column in columns}
+    student_col=next((c for c in columns if (re.search(r'\b(student|learner|candidate)\b',labels[c]) or labels[c] in {'name','full name'}) and not re.search(r'\b(id|number|no|roll|code)\b',labels[c])),None)
+    if student_col is None: return None
+    numeric=list(df.select_dtypes(include=np.number).columns)
+    total_col=next((c for c in numeric if re.search(r'\b(total|aggregate|overall)\b',labels[c]) and re.search(r'\b(mark|score|result|total|aggregate|overall)\b',labels[c])),None)
+    excluded=re.compile(r'\b(aggregate|overall|percentage|percent|rank|roll|attendance|attended|age|serial|id|usn|batch|semester|section|year|subjects? passed|subjects? failed|pass(?:ed)?|fail(?:ed)?|grade|gpa|cgpa)\b')
+    subjects=[c for c in numeric if c!=total_col and not excluded.search(labels[c])]
+    if not subjects and total_col is not None: subjects=[total_col]
+    if not subjects: return None
+    totals=pd.to_numeric(df[total_col],errors='coerce') if total_col is not None else df[subjects].apply(pd.to_numeric,errors='coerce').sum(axis=1,min_count=1)
+    values=totals.dropna().astype(float)
+    if not len(values): return None
+    batch_col=next((c for c in columns if re.search(r'\bbatch\b',labels[c])),None)
+    branch_col=next((c for c in columns if re.search(r'\b(branch|department|program|stream)\b',labels[c])),None)
+    id_col=next((c for c in columns if re.search(r'\b(usn|roll|id|enrollment|registration|admission)\b',labels[c]) and c!=student_col),None)
+    status_col=next((c for c in columns if re.search(r'\b(pass|result|status)\b',labels[c])),None)
+    passed_col=next((c for c in columns if re.search(r'\bsubjects? passed\b|\bpassed subjects\b|\bpass count\b',labels[c])),None)
+    failed_col=next((c for c in columns if re.search(r'\bsubjects? failed\b|\bfailed subjects\b|\bfail count\b',labels[c])),None)
+    attendance_col=next((c for c in columns if re.search(r'\b(attendance|attended|present)\b',labels[c])),None)
+    pass_rate=None
+    if passed_col is not None and failed_col is not None:
+        passed=pd.to_numeric(df[passed_col],errors='coerce').fillna(0)
+        failed=pd.to_numeric(df[failed_col],errors='coerce').fillna(0)
+        attempts=float((passed+failed).sum())
+        if attempts: pass_rate=round(float(passed.sum()/attempts*100),1)
+    elif status_col is not None:
+        statuses=df[status_col].astype(str).str.strip().str.lower()
+        passed=statuses.isin({'pass','passed','p','yes','true','1','qualified'})
+        failed=statuses.isin({'fail','failed','f','no','false','0','not qualified'})
+        recognized=passed|failed
+        if recognized.any(): pass_rate=round(float(passed[recognized].mean()*100),1)
+    bins=min(8,max(1,int(np.ceil(np.sqrt(len(values))))))
+    counts,edges=np.histogram(values,bins=bins)
+    distribution={'labels':[f'{edges[i]:.0f}-{edges[i+1]:.0f}' for i in range(len(counts))],'values':[int(v) for v in counts]}
+    subject_averages=[{'label':str(c),'value':js(pd.to_numeric(df[c],errors='coerce').mean())} for c in subjects]
+    names=df[student_col].fillna('Unknown').astype(str)
+    ranking=pd.DataFrame({'name':names,'total':totals}).dropna(subset=['total']).nlargest(10,'total')
+    top_students={'labels':ranking['name'].tolist(),'values':[js(v) for v in ranking['total'].tolist()]}
+    personal_fields=list(dict.fromkeys([student_col,*([id_col] if id_col else []),*([batch_col] if batch_col else []),*([branch_col] if branch_col else []),*[c for c in columns if re.search(r'\b(semester|attendance|attended|present|grade|gpa|cgpa|gender|email|phone|section|result|status)\b',labels[c])]]))
+    trend_field=next((c for c in columns if re.search(r'\b(semester|term|academic year|year|date|month|quarter)\b',labels[c]) and df[c].nunique(dropna=True)>1),None)
+    record_columns=list(dict.fromkeys([*personal_fields,*[c for c in columns if c not in numeric],*subjects,*([total_col] if total_col else []),*([passed_col] if passed_col else []),*([failed_col] if failed_col else [])]))
+    records=[]
+    for index,(_,row) in enumerate(df[record_columns].iterrows()):
+        record={'_index':index,'_total':js(totals.iloc[index]) if pd.notna(totals.iloc[index]) else None}
+        for column in record_columns:
+            value=row[column]
+            record[str(column)]=None if pd.isna(value) else js(value) if column in numeric else str(value)
+        records.append(record)
+    return {'student_field':str(student_col),'id_field':str(id_col) if id_col else None,'batch_field':str(batch_col) if batch_col else None,'branch_field':str(branch_col) if branch_col else None,'attendance_field':str(attendance_col) if attendance_col else None,'personal_fields':[str(c) for c in personal_fields],'trend_field':str(trend_field) if trend_field else None,'subject_fields':[str(c) for c in subjects],'total_field':str(total_col) if total_col else None,'passed_field':str(passed_col) if passed_col else None,'failed_field':str(failed_col) if failed_col else None,'students':len(df),'average_total':round(float(values.mean()),1),'highest_total':js(values.max()),'pass_rate':pass_rate,'total_distribution':distribution,'subject_averages':subject_averages,'top_students':top_students,'records':records}
 def analyze(df):
     raw=profile(df); x=clean(df); cp=profile(x); ins=[]
     if raw['missing_values']: ins.append(f"{raw['missing_values']} missing values detected; numeric values use median imputation and categorical values use the mode.")
@@ -75,7 +126,10 @@ def analyze(df):
     if cp['top_correlations']:
         c=cp['top_correlations'][0]; ins.append(f"Strongest numeric relationship: {c['x']} vs {c['y']} with correlation {c['value']:.2f}.")
     if not ins: ins.append('The dataset is structurally clean with no major missing-value or duplicate-row issue detected.')
-    return {'profile':raw,'clean_profile':cp,'insights':ins,'charts':charts(x),'preview':x.head(25).replace({np.nan:None}).to_dict(orient='records')}
+    result={'profile':raw,'clean_profile':cp,'insights':ins,'charts':charts(x),'preview':x.head(25).replace({np.nan:None}).to_dict(orient='records')}
+    academic=student_dashboard(df)
+    if academic is not None: result['academic']=academic
+    return result
 async def llm(prompt,context):
     p=os.getenv('AI_PROVIDER','local').lower(); msgs=[{'role':'system','content':'You are InsightForge, a concise autonomous data analyst. Do not invent numbers; use supplied computed context.'},{'role':'user','content':json.dumps({'request':prompt,'context':context})}]
     if p=='groq' and os.getenv('GROQ_API_KEY'):
